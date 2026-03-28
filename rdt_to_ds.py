@@ -75,26 +75,39 @@ def _fetch_memes_for_period(period: str) -> list[dict]:
             if media_url:
                 image_url = media_url
 
-        # Ещё пробуем вытащить картинку из HTML в <content>
-        if not image_url:
-            content_el = entry.find(f"{ATOM_NS}content")
-            if content_el is not None and content_el.text:
-                img_match = re.search(r'<img\s+src="([^"]+)"', content_el.text)
-                if img_match:
-                    image_url = img_match.group(1).replace("&amp;", "&")
+        # Ищем медиа из HTML в <content>
+        content_el = entry.find(f"{ATOM_NS}content")
+        content_html = content_el.text if content_el is not None else ""
 
-        if not image_url:
+        if not image_url and content_html:
+            img_match = re.search(r'<img\s+src="([^"]+)"', content_html)
+            if img_match:
+                image_url = img_match.group(1).replace("&amp;", "&")
+
+        # Ищем GIF-ки (i.redd.it .gif, imgur .gifv/.gif)
+        if not image_url and content_html:
+            gif_match = re.search(r'href="(https?://[^"]+\.gifv?)"', content_html)
+            if gif_match:
+                image_url = gif_match.group(1).replace("&amp;", "&")
+                # imgur .gifv -> .gif для Discord
+                if image_url.endswith(".gifv"):
+                    image_url = image_url[:-1]
+
+        # Проверяем, есть ли видео с v.redd.it
+        video_url = None
+        if not image_url and content_html:
+            video_match = re.search(r'href="(https://v\.redd\.it/[^"]+)"', content_html)
+            if video_match:
+                video_url = video_match.group(1).replace("&amp;", "&")
+
+        if not image_url and not video_url:
             continue
 
         # Reddit превью — заменяем на полный размер если это i.redd.it
-        image_url = image_url.replace("&amp;", "&")
-        # preview.redd.it -> i.redd.it (полный размер)
-        if "preview.redd.it" in image_url:
-            # Попробуем вытащить оригинальный URL из content
-            content_el = entry.find(f"{ATOM_NS}content")
-            if content_el is not None and content_el.text:
-                # Ищем ссылку на i.redd.it
-                orig_match = re.search(r'href="(https://i\.redd\.it/[^"]+)"', content_el.text)
+        if image_url:
+            image_url = image_url.replace("&amp;", "&")
+            if "preview.redd.it" in image_url and content_html:
+                orig_match = re.search(r'href="(https://i\.redd\.it/[^"]+)"', content_html)
                 if orig_match:
                     image_url = orig_match.group(1)
 
@@ -102,6 +115,7 @@ def _fetch_memes_for_period(period: str) -> list[dict]:
             "id": post_id,
             "title": title,
             "url": image_url,
+            "video_url": video_url,
             "permalink": link,
         })
 
@@ -109,15 +123,22 @@ def _fetch_memes_for_period(period: str) -> list[dict]:
 
 
 def post_to_discord(meme: dict):
-    payload = {
-        "embeds": [{
-            "title": meme["title"],
-            "url": meme["permalink"],
-            "image": {"url": meme["url"]},
-            "footer": {"text": f"r/{SUBREDDIT}"},
-            "color": 0xFF1801,
-        }]
-    }
+    if meme["url"]:
+        # Картинка или GIF — через embed
+        payload = {
+            "embeds": [{
+                "title": meme["title"],
+                "url": meme["permalink"],
+                "image": {"url": meme["url"]},
+                "footer": {"text": f"r/{SUBREDDIT}"},
+                "color": 0xFF1801,
+            }]
+        }
+    else:
+        # Видео — отправляем ссылку, Discord сам сделает превью
+        payload = {
+            "content": f"**{meme['title']}**\n{meme['permalink']}",
+        }
     resp = requests.post(DISCORD_WEBHOOK_URL, json=payload, timeout=15)
     resp.raise_for_status()
 
