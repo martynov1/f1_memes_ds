@@ -14,4 +14,4 @@ jobs:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SSH_KEY }}
-          script: cd /path/to/f1_memes_ds && git pull
+          script: cd /f1_memes_ds && git pull
