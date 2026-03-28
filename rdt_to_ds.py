@@ -43,8 +43,14 @@ def save_posted_ids(ids: set):
 
 
 def fetch_top_memes() -> list[dict]:
-    """Забрать топ мемы за день из r/formuladank через RSS."""
-    url = f"https://www.reddit.com/r/{SUBREDDIT}/top.rss?t=day&limit=20"
+    """Забрать топ мемы за день из r/formuladank через RSS. Сначала за day, если новых нет — за week."""
+    memes = _fetch_memes_for_period("day")
+    return memes
+
+
+def _fetch_memes_for_period(period: str) -> list[dict]:
+    """Забрать топ мемы за указанный период."""
+    url = f"https://www.reddit.com/r/{SUBREDDIT}/top.rss?t={period}&limit=20"
     resp = requests.get(url, headers={"User-Agent": USER_AGENT}, timeout=30)
     resp.raise_for_status()
 
@@ -122,12 +128,22 @@ def main():
         sys.exit(1)
 
     print(f"Забираю топ мемы из r/{SUBREDDIT}...")
-    memes = fetch_top_memes()
-    print(f"  Найдено {len(memes)} картинок")
-
     posted_ids = load_posted_ids()
+
+    # Сначала берём за день
+    memes = _fetch_memes_for_period("day")
     new_memes = [m for m in memes if m["id"] not in posted_ids]
-    print(f"  Новых (ещё не отправленных): {len(new_memes)}")
+    print(f"  Найдено за день: {len(memes)}, новых: {len(new_memes)}")
+
+    # Если новых за день нет — берём за неделю
+    if not new_memes:
+        print("  Новых за день нет, смотрю за неделю...")
+        memes = _fetch_memes_for_period("week")
+        new_memes = [m for m in memes if m["id"] not in posted_ids]
+        print(f"  Найдено за неделю: {len(memes)}, новых: {len(new_memes)}")
+
+    # Постим от старых к новым
+    new_memes.reverse()
 
     sent = 0
     for meme in new_memes[:MAX_POSTS_PER_RUN]:
